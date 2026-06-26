@@ -1,11 +1,24 @@
 const crypto = require('crypto');
 global.crypto = crypto;
 
+const fs = require('fs');
+const express = require('express');
+const QRCode = require('qrcode');
 const { default: makeWASocket, DisconnectReason, useMultiFileAuthState, Browsers, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const qrcode = require('qrcode-terminal');
 
-const AUTH_PATH = './auth_info_ezed';
+const app = express();
+const PORT = process.env.PORT || 3000;
+const AUTH_PATH = 'auth_info_ezed';
+let latestQR = null;
+
+app.get('/qr', async (req, res) => {
+    if (!latestQR) return res.send('<h1>No QR yet. Refresh in 5s.</h1>');
+    const qrImage = await QRCode.toDataURL(latestQR);
+    res.send(`<h1>EZED X TECH</h1><img src="${qrImage}" style="width:320px;height:320px"/><p>Scan in 20s or refresh.</p>`);
+});
+app.get('/', (req, res) => res.send('EZED X TECH alive 💀'));
+app.listen(PORT, () => console.log(`Web on ${PORT}`));
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_PATH);
@@ -14,9 +27,9 @@ async function startBot() {
     const sock = makeWASocket({
         version,
         auth: state,
-        logger: pino({ level:'info' }),
+        logger: pino({ level:'silent' }), // <-- Silent logs
         browser: Browsers.ubuntu('Chrome'),
-        printQRInTerminal: false
+        printQRInTerminal: false // <-- No QR in logs
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -24,16 +37,19 @@ async function startBot() {
     sock.ev.on('connection.update', (u) => {
         const { connection, qr, lastDisconnect } = u;
         if (qr) {
-            console.log('=== SCAN THIS QR ===');
-            qrcode.generate(qr, { small: true });
+            latestQR = qr; // Only store it, don't console.log it
         }
         if (connection === 'open') {
-            console.log('✅ LOGGED IN. Close terminal now. DO NOT PUSH THIS FOLDER TO GITHUB');
-            process.exit(0);
+            latestQR = null;
+            console.log('✅ EZED X TECH CONNECTED');
         }
-        if (connection === 'close' && lastDisconnect.error?.output?.statusCode === DisconnectReason.loggedOut) {
-            console.log('Logged out. Delete auth_info_ezed and try again');
-            process.exit(1);
+        if (connection === 'close') {
+            const code = lastDisconnect.error?.output?.statusCode;
+            if (code === DisconnectReason.loggedOut) {
+                console.log('Logged out. Delete auth_info_ezed folder');
+                fs.rmSync(AUTH_PATH, { recursive: true, force: true });
+            }
+            setTimeout(startBot, 3000);
         }
     });
 
@@ -41,7 +57,7 @@ async function startBot() {
         const msg = messages[0];
         if (!msg.message || msg.key.fromMe) return;
         if (msg.message.conversation?.toLowerCase() === 'ping') {
-            await sock.sendMessage(msg.key.remoteJid, { text: 'pong 💀 EZED X TECH is live' });
+            await sock.sendMessage(msg.key.remoteJid, { text: 'pong 💀' });
         }
     });
 }
