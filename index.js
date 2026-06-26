@@ -1,17 +1,31 @@
 const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const http = require('http');
+const QRCode = require('qrcode');
 
-// 1. Web server to keep Render awake + for UptimeRobot
+let latestQR = null; // We’ll store the QR here
+
+// 1. Web server to show QR on /qr
 const PORT = process.env.PORT || 3000;
-http.createServer((_, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('EZED X TECH is alive 💀');
+http.createServer(async (req, res) => {
+    if (req.url === '/qr' && latestQR) {
+        // Show QR as image
+        const qrImage = await QRCode.toDataURL(latestQR);
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(`
+            <h1>EZED X TECH</h1>
+            <p>Scan this with WhatsApp > Linked Devices</p>
+            <img src="${qrImage}" style="width:300px;height:300px"/>
+            <p>Refresh if it expired</p>
+        `);
+    } else {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('EZED X TECH is alive 💀. Go to /qr to scan');
+    }
 }).listen(PORT, () => console.log(`Web server on port ${PORT}`));
 
 // 2. WhatsApp connection
 async function startBot() {
-    // IMPORTANT: This path must match your Render Disk Mount Path
     const AUTH_PATH = '/opt/render/project/src/auth_info_ezed';
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_PATH);
 
@@ -28,20 +42,16 @@ async function startBot() {
         const { connection, qr, lastDisconnect } = u;
 
         if (qr) {
-            console.log('=== EZED X TECH QR START ===');
-            console.log(qr); // Copy this entire string to qrcode.com
-            console.log('=== EZED X TECH QR END ===');
+            latestQR = qr; // Save it for the web page
+            console.log('=== NEW QR GENERATED. GO TO /qr ===');
         }
-        if (connection === 'open') console.log('✅ EZED X TECH CONNECTED');
+        if (connection === 'open') {
+            latestQR = null; // Clear QR once logged in
+            console.log('✅ EZED X TECH CONNECTED');
+        }
         if (connection === 'close') {
             const code = lastDisconnect.error?.output?.statusCode;
-            console.log('Connection closed. Code:', code);
-            if (code!== DisconnectReason.loggedOut) {
-                console.log('Reconnecting...');
-                startBot();
-            } else {
-                console.log('Logged out. Delete disk and rescan.');
-            }
+            if (code!== DisconnectReason.loggedOut) startBot();
         }
     });
 
@@ -53,9 +63,9 @@ async function startBot() {
         const text = (msg.message.conversation || msg.message.extendedTextMessage?.text || '').toLowerCase().trim();
 
         let reply = 'Type *menu* 💀';
-        if (text === 'menu') reply = '*EZED X TECH* 💀\n\n*menu* - Show this\n*ping* - Test if alive\n*tech* - Tech tip';
+        if (text === 'menu') reply = '*EZED X TECH* 💀\n\n*menu* *ping* *tech*';
         if (text === 'ping') reply = 'pong 💀 EZED X TECH is live';
-        if (text === 'tech') reply = 'Tip: GitHub + Render = 24/7 🔥';
+        if (text === 'tech') reply = 'QR now on web 🔥';
 
         await sock.sendMessage(from, { text: reply });
     });
